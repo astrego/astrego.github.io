@@ -1,0 +1,186 @@
+---
+title: "Coursera Machine learning Assignment"
+author: "Karlan Astrego"
+date: "17 maart 2015"
+output:
+  html_document:
+    pandoc_args: [
+      "+RTS", "-K64m",
+      "-RTS"
+    ]
+---
+
+##Synopsis
+
+In this paper I will use the Random Forest algorithm on the data from the Weight Lifting Dataset. With the algorithm I will try to predict the activities on a subset of the variables. In the appendix you will find all the R code.
+
+##Explore and prepare the data
+
+```{r, include=FALSE}
+setwd("~/Documents/Rstudio/Coursera/ML")
+library(randomForest)
+library(caret)
+dftraining <- read.csv("pml-training.csv",na.strings=c("NA","#DIV/0!", " "))
+dfTrNa <- dftraining[ , apply(dftraining, 2, function(x) !any(is.na(x)))] #verwijdert kolommen met NA
+dfEind <- dfTrNa[,7:60]
+set<-createDataPartition(y=dfEind$classe,p=0.8,list=FALSE)
+set1 = dfEind[ set,]
+testing = dfEind[-set,]
+
+```
+
+First I loaded the data with all the default options. The result is a data frame with 160 features/variables and 19622 rows. It is rather large but there are a lot of variables with many NA's, empty records and with the value #DIV/0!. This last one is a typicall error code from Microsoft Excel. It often means that there went something wrong with the formula in the specific cell. I will treat the empty records and the cells with the error code as NA's.
+
+Second, I loaded the data again in a data frame but now I have turned the empty records and the records with #DIV/0! into NA's. Now there are a lot of features that exists mostly out of NA's. For instance the variable avg_pitch_forearm has 19216 NA's out of 19622 records that means that 98% of the records are useless and there are many more of these sort of variables in this dataset, so I decided to remove those.
+
+After removing the features with the NA's, there are 60 colums left. This little action cleaned the data in a nice way but I wasn't satisfied, yet.
+
+I think that some features will have no influence on the prediction. Those are "X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2" and "cvtd_timestamp". So I pruned those too. There are now 54 features left. As a final check, let's look at how balanced the set is. Are the classes (A,B,C,D,E) evenly spreaded? I made a propability table to check this.
+
+```{r, echo=FALSE, comment="", echo=FALSE}
+classe_table<- table(dfEind$classe) 
+prop.table(classe_table)
+```
+
+As you can see, the set is a bit unbalanced. More records fall in the "A" class compared to the other classes but every class has a substantial portion of records. So I don't worry too much about it. The dataset is ready to go..
+
+##Methodology
+
+As the classes are known, I will use a supervised machine learning algorithm. I chose for the Random Forest algorithm because it handles a big dataset with a lot of features well. The downside is that the final model will lack some interpretability but that is not a big problem here because the main goal is to get an accurate prediction.
+
+The Random Forest is also great for feature selection. I wanted to see if I could shrink the amount of features. Because of that I divided the data set in three parts. The dataset is rather large so I think this will not be a big problem. A big advantage is, when cross validating (more on that later), the computing time is much shorter.
+
+First, I divided the tidy dataset two sets. I reserved 20% of the data for a test set. 
+
+Second, the remaining 80% is divided in a set for feature selection (50%) and a final training set (50%).
+
+####Fitting the model
+
+1. I fitted a Random Forest model with ntree=1000 on the set for feature selection.
+
+2. With the results of step 1, I narrowed down the number of features (I will be using only the most important features) and the number of trees.
+
+3. Fit a Random Forest model on the training set. I used the caret package for this. I did a cross validation with 5 folds and this will be repeated 5 times.
+
+4. Used the trained model for prediction on the test set.
+
+##Results feature selection
+
+In the Variable Importance plot, you can see that there some features a whole lot more important than others. The dots that are more to the right are the most important. I chose a cut off level of a Mean Decrease Accuracy of 50 ( a bit arbitrary). For the final model I will use the following 7 features; yaw_belt, num_window, roll_belt, pitch_belt, magnet_dumbbell_z, magnet_dumbbell_y, pitch_forearm.
+
+In the plot of the Error rate/OOB you can see that the Out of Box error rate (the black line) is decreasing when the number of trees grows. Due to the long computing time when I do cross validation I chose a fairly low number of trees (ntree = 350) for my final model. 
+
+The Out of Box error rate (OOB) is 0.7% which looks promising because according to the theory the OOB is a reasonbly good estimate for the out of sample error rate.
+
+```{r, include=FALSE}
+set<-createDataPartition(y=dfEind$classe,p=0.8,list=FALSE)
+set1 = dfEind[ set,]
+testing = dfEind[-set,]
+InTrain<-createDataPartition(y=set1$classe,p=0.5,list=FALSE)
+trainset1 <- set1[InTrain,]
+finalset <- set1[-InTrain,]
+set.seed(300)
+fit <- randomForest(classe ~ .,data=trainset1,importance=TRUE,do.trace=TRUE,ntree=1000, prox=TRUE)
+
+```
+
+```{r, echo=FALSE, comment="", echo=FALSE}
+varImpPlot(fit,type=1,pch=19, main="Variable importance", color="blue", cex=0.7)
+plot(fit, log="y",type="l", main="Plot of Error rate/OOB")
+legend("topright", colnames(fit$err.rate),col=1:4,cex=0.8,fill=1:4)
+fit
+```
+
+##Fitting the final model
+
+For the final model I train the model on the 7 features I mentioned earlier. I will do a cross validation of 5 folds which are repeated 5 times. The best model used a mtry of 2. The accuracy is 99,46%. That's pretty high. I don't think there is room for much improvement. So I will use this trained model for my prediction.
+
+```{r, include=FALSE}
+ctrl <- trainControl(method = "repeatedcv", number = 5, repeats = 5)
+finmod <- train(classe ~ yaw_belt + num_window + roll_belt + magnet_dumbbell_z + pitch_belt + magnet_dumbbell_y + pitch_forearm,method="rf",data=finalset, metric="Accuracy",trControl = ctrl, prox=TRUE, do.trace=TRUE,allowParallel=TRUE,ntree=350)
+
+```
+
+```{r, echo=FALSE, comment="", echo=FALSE}
+finmod
+```
+
+##Prediction on the test data set
+
+I used the final model on the test data set. The out of sample error when looking at the accuracy is 99,59%. It is even an improvement on the training data set. 
+
+```{r, echo=FALSE, comment="", echo=FALSE}
+prediction <- predict(finmod, testing)
+confusionMatrix(prediction, testing$classe)
+```
+
+####Just to be sure
+
+I also included the results of the prediction on the data from "pml-testing.csv". It is not completely clear that it is necessary in the assignment.
+
+```{r, echo=FALSE, comment="", echo=FALSE}
+dftest <- read.csv("pml-testing.csv",na.strings=c("NA","#DIV/0!", " "))
+dfTestNa <- dftest[ , apply(dftest, 2, function(x) !any(is.na(x)))]
+dfTestEind <- dfTestNa[,6:59]
+modpred2<- predict(finmod, dfTestEind)
+```
+
+```{r, echo=FALSE, comment="", echo=FALSE}
+modpred2
+```
+
+##APPENDIX
+
+####The code for reading the data and cleaning the data
+```{r, eval=FALSE}
+setwd("~/Documents/Rstudio/Coursera/ML")
+library(randomForest)
+library(caret)
+dftraining <- read.csv("pml-training.csv",na.strings=c("NA","#DIV/0!", " "))
+dfTrNa <- dftraining[ , apply(dftraining, 2, function(x) !any(is.na(x)))] #verwijdert kolommen met NA
+dfEind <- dfTrNa[,7:60]
+set<-createDataPartition(y=dfEind$classe,p=0.8,list=FALSE)
+set1 = dfEind[ set,]
+testing = dfEind[-set,]
+
+classe_table<- table(dfEind$classe) # The propability table
+prop.table(classe_table)
+
+```
+
+####The code for the feature selection and the plots
+
+```{r, eval=FALSE}
+set<-createDataPartition(y=dfEind$classe,p=0.8,list=FALSE)
+set1 = dfEind[ set,]
+testing = dfEind[-set,]
+InTrain<-createDataPartition(y=set1$classe,p=0.5,list=FALSE)
+trainset1 <- set1[InTrain,]
+finalset <- set1[-InTrain,]
+set.seed(300)
+fit <- randomForest(classe ~ .,data=trainset1,importance=TRUE,do.trace=TRUE,ntree=1000, prox=TRUE)
+# Plot for the most important features
+varImpPlot(fit,type=1,pch=19, main="Variable importance", color="blue", cex=0.7)
+# Error rate plot/OOB
+plot(fit, log="y",type="l", main="Plot of Error rate/OOB")
+legend("topright", colnames(fit$err.rate),col=1:4,cex=0.8,fill=1:4)
+fit
+
+```
+
+
+####The code for the final model,the prediction on the test data and pml-testing.csv
+```{r, eval=FALSE}
+#Training the final model
+ctrl <- trainControl(method = "repeatedcv", number = 5, repeats = 5)
+finmod <- train(classe ~ yaw_belt + num_window + roll_belt + magnet_dumbbell_z + pitch_belt + magnet_dumbbell_y + pitch_forearm,method="rf",data=finalset, metric="Accuracy",trControl = ctrl, prox=TRUE, do.trace=TRUE,allowParallel=TRUE,ntree=350)
+#Prediction
+prediction <- predict(finmod, testing)
+confusionMatrix(prediction, testing$classe)
+#Prediction on pml-testing.csv
+dftest <- read.csv("pml-testing.csv",na.strings=c("NA","#DIV/0!", " "))
+dfTestNa <- dftest[ , apply(dftest, 2, function(x) !any(is.na(x)))]
+dfTestEind <- dfTestNa[,6:59]
+modpred2<- predict(finmod, dfTestEind)
+
+```
